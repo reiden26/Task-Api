@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Base de datos PostgreSQL
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: task-api-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-taskapi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskapi_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-taskdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taskapi} -d ${POSTGRES_DB:-taskdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - task-api-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Caché Redis
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: task-api-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - task-api-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # API de tareas
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: task-api-app
+    environment:
+      # Database
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-taskapi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskapi_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-taskdb}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-supersecretkeychangethisinproductionmin32chars}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      # App
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # CORS
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - task-api-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Script de inicio que espera a postgres y ejecuta migraciones
+    entrypoint: ["./scripts/entrypoint.sh"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers"]
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  task-api-network:
+    driver: bridge

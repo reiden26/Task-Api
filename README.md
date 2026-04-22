@@ -370,6 +370,3 @@ docker compose exec postgres psql -U taskapi -d postgres -c "CREATE DATABASE tas
 
 MIT License - ver LICENSE para detalles.
 
-## Contacto
-
-Para preguntas o soporte, abrir un issue en el repositorio.
